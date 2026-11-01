@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Paper Desk</title>
+<style>
+:root{--bg:#f4f6f3;--card:#fff;--ink:#14222a;--dim:#5f737a;--line:#d8e0dc;--up:#0f8a5f;--down:#c8384f;--accent:#0d5c63;--on:#fff;color-scheme:light dark;
+padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1a20;--card:#14262e;--ink:#e6efed;--dim:#8aa5a8;--line:#24404a;--up:#3ddc97;--down:#ff6b81;--accent:#7fd4cc;--on:#08242a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:500 16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;padding-bottom:30px}
+header{padding:14px 16px 4px;font-weight:800;font-size:22px}
+header span{display:block;font-weight:500;font-size:13px;color:var(--dim)}
+#chips{display:flex;gap:8px;overflow-x:auto;padding:8px 16px}
+.chip,.btn{font:inherit;font-weight:700;cursor:pointer}
+.chip{flex:none;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;border-radius:999px}
+.chip[aria-pressed="true"]{background:var(--accent);color:var(--on);border-color:var(--accent)}
+.card{margin:10px 16px;padding:14px 16px;background:var(--card);border:1px solid var(--line);border-radius:14px}
+.card h2{margin:0 0 8px;font-size:16px}
+#price{font-size:34px;font-weight:800;letter-spacing:-.5px}
+#chg{font-weight:800;margin-left:8px}
+.up{color:var(--up)}.down{color:var(--down)}.dim{color:var(--dim);font-size:13px}
+svg{width:100%;height:80px;display:block;margin-top:8px}
+dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 14px}
+dt{color:var(--dim)}dd{margin:0;text-align:right;font-weight:700}
+p{margin:8px 0 0}
+.row{display:flex;gap:10px}
+label{flex:1;font-size:13px;color:var(--dim)}
+input{width:100%;font:inherit;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.btn{border:0;border-radius:12px;padding:12px 16px;background:var(--accent);color:var(--on);margin-top:10px;width:100%}
+.btn.alt{background:transparent;color:var(--ink);border:1px solid var(--line);margin-top:0;width:auto;padding:6px 10px;font-size:13px}
+.chip:focus-visible,.btn:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.t{border-top:1px solid var(--line);padding:10px 0;display:flex;justify-content:space-between;gap:10px;align-items:center}
+.t:first-of-type{border-top:0}
+</style>
+</head>
+<body>
+<header>Paper Desk<span>Live prices from Gemini&rsquo;s public API. Practice only, not financial advice.</span></header>
+<div id="chips" role="group" aria-label="Choose a coin"></div>
+
+<div class="card">
+  <div><span id="price">&hellip;</span><span id="chg"></span></div>
+  <div class="dim" id="meta">Loading</div>
+  <svg id="spark" viewBox="0 0 300 80" preserveAspectRatio="none" aria-hidden="true"></svg>
+</div>
+
+<div class="card"><h2>Read on the chart</h2><dl id="stats"></dl><p id="read" class="dim"></p></div>
+
+<div class="card"><h2>Paper trade plan</h2>
+  <div class="row"><label>Paper account ($)<input id="acct" type="number" inputmode="decimal" value="10000"></label>
+  <label>Risk per trade (%)<input id="risk" type="number" inputmode="decimal" value="1" step="0.5"></label></div>
+  <dl id="plan" style="margin-top:12px"></dl><p id="planNote" class="dim"></p>
+  <button class="btn" id="add">Add to paper log</button>
+</div>
+
+<div class="card"><h2>Paper log</h2><div id="log"></div><p class="dim" id="logNote"></p></div>
+
+<script>
+(function(){
+var API='https://api.gemini.com/v2';
+var COINS=['BTC','ETH','SOL','XRP','DOGE','LTC','LINK'];
+var $=function(i){return document.getElementById(i)};
+var cur='BTC',tick=null,cs=[],plan=null,trades=[];
+try{trades=JSON.parse(localStorage.getItem('paperTrades')||'[]')}catch(e){}
+function save(){try{localStorage.setItem('paperTrades',JSON.stringify(trades))}catch(e){}}
+function fmt(n){n=+n;return '$'+(n>=100?n.toLocaleString(undefined,{maximumFractionDigits:0}):n>=1?n.toFixed(2):n.toFixed(5))}
+function sym(c){return c.toLowerCase()+'usd'}
+function get(path){return fetch(API+path).then(function(r){if(!r.ok)throw new Error(r.status);return r.json()})}
+COINS.forEach(function(c){var b=document.createElement('button');b.className='chip';b.textContent=c;b.setAttribute('aria-pressed',c===cur);
+ b.onclick=function(){cur=c;[].forEach.call($('chips').children,function(x){x.setAttribute('aria-pressed',x===b)});load()};$('chips').appendChild(b)});
+function sma(a,n){if(a.length<n)return null;var s=0;for(var i=a.length-n;i<a.length;i++)s+=a[i];return s/n}
+function rsi(a,n){if(a.length<n+1)return null;var g=0,l=0;for(var i=a.length-n;i<a.length;i++){var d=a[i]-a[i-1];if(d>0)g+=d;else l-=d}return l===0?100:100-100/(1+g/l)}
+function spark(a){if(a.length<2){$('spark').innerHTML='';return}var lo=Math.min.apply(null,a),hi=Math.max.apply(null,a);
+ var pts=a.map(function(v,i){return (i/(a.length-1)*300).toFixed(1)+','+(76-(v-lo)/((hi-lo)||1)*72).toFixed(1)}).join(' ');
+ $('spark').innerHTML='<polyline fill="none" stroke="'+(a[a.length-1]>=a[0]?'var(--up)':'var(--down)')+'" stroke-width="2" vector-effect="non-scaling-stroke" points="'+pts+'"/>'}
+function row(k,v){return '<dt>'+k+'</dt><dd>'+v+'</dd>'}
+function analyze(){
+ var old=cs.slice().reverse(),cl=old.map(function(c){return c[4]}),p=+tick.close;
+ var last30=old.slice(-30),last10=old.slice(-10);
+ var sup=Math.min.apply(null,last10.map(function(c){return c[3]})),res=Math.max.apply(null,last30.map(function(c){return c[2]}));
+ var s20=sma(cl,20),s50=sma(cl,50),r=rsi(cl,14);
+ $('stats').innerHTML=row('Support (10-day low)',fmt(sup))+row('Resistance (30-day high)',fmt(res))+row('20-day average',s20?fmt(s20):'n/a')+row('50-day average',s50?fmt(s50):'n/a')+row('RSI (14 days)',r?r.toFixed(0):'n/a');
+ var trend=s20&&s50?(p>s20&&s20>s50?'Uptrend: price is above both averages.':p<s20&&s20<s50?'Downtrend: price is below both averages.':'Mixed: price and averages disagree, so no clear trend.'):'Not enough history for a trend.';
+ var mood=r?(r>70?' RSI is high, so a pullback is more likely than usual.':r<30?' RSI is low, so a bounce is more likely than usual, but falling prices can keep falling.':' RSI is neutral.'):'';
+ $('read').textContent=trend+mood+' Bull case: holding '+fmt(sup)+' and breaking '+fmt(res)+'. Bear case: closing below '+fmt(sup)+'. These are rules of thumb, not predictions.';
+ var acct=+$('acct').value||0,risk=(+$('risk').value||0)/100;
+ var entry=sup*1.005,stop=sup*0.98,tgt=res,rr=(tgt-entry)/(entry-stop),size=(acct*risk)/(entry-stop);
+ plan={sym:cur,entry:entry,stop:stop,target:tgt,size:size};
+ $('plan').innerHTML=row('Limit entry',fmt(entry))+row('Stop',fmt(stop))+row('Target',fmt(tgt))+row('Size',size.toPrecision(3)+' '+cur)+row('Money at risk','$'+(acct*risk).toFixed(0))+row('Reward vs risk',rr.toFixed(1)+' to 1');
+ $('planNote').textContent=entry>=p?'Entry is above the current price, so it would fill right away.':'Fills only if price falls to the entry.';
+ if(rr<1.5)$('planNote').textContent+=' Reward vs risk is below 1.5 to 1, so skipping this one is reasonable.'}
+function load(){$('meta').textContent='Loading '+cur;$('price').textContent='\u2026';$('chg').textContent='';
+ var my=cur;
+ Promise.all([get('/ticker/'+sym(cur)),get('/candles/'+sym(cur)+'/1day')]).then(function(r){if(my!==cur)return;
+  tick=r[0];cs=r[1];var p=+tick.close,o=+tick.open,ch=(p-o)/o*100;
+  $('price').textContent=fmt(p);$('chg').textContent=(ch>=0?'+':'')+ch.toFixed(2)+'%';$('chg').className=ch>=0?'up':'down';
+  $('meta').textContent='Low '+fmt(tick.low)+' \u00b7 High '+fmt(tick.high)+' \u00b7 Updated '+new Date().toLocaleTimeString();
+  spark(cs.slice(0,30).reverse().map(function(c){return c[4]}));analyze();check()
+ }).catch(function(){$('meta').textContent='Could not reach Gemini. Check your connection and retry.'})}
+function check(){var syms={};trades.forEach(function(t){if(t.status==='pending'||t.status==='open')syms[t.sym]=1});
+ Object.keys(syms).forEach(function(s){get('/ticker/'+sym(s)).then(function(k){var p=+k.close,ch=false;
+  trades.forEach(function(t){if(t.sym!==s)return;
+   if(t.status==='pending'&&p<=t.entry){t.status='open';ch=true}
+   if(t.status==='open'){if(p<=t.stop){t.status='stopped';t.exit=t.stop;ch=true}else if(p>=t.target){t.status='target';t.exit=t.target;ch=true}}
+   t.last=p});save();draw()}).catch(function(){})});draw()}
+function draw(){var h='';
+ trades.slice().reverse().forEach(function(t,i){var idx=trades.length-1-i,pnl=null;
+  if(t.exit!=null)pnl=(t.exit-t.entry)*t.size;else if(t.status==='open'&&t.last)pnl=(t.last-t.entry)*t.size;
+  h+='<div class="t"><div><b>'+t.sym+'</b> '+t.status+'<div class="dim">in '+fmt(t.entry)+' \u00b7 stop '+fmt(t.stop)+' \u00b7 target '+fmt(t.target)+'</div></div>'+
+   '<div style="text-align:right">'+(pnl==null?'<span class="dim">waiting</span>':'<b class="'+(pnl>=0?'up':'down')+'">'+(pnl>=0?'+':'-')+'$'+Math.abs(pnl).toFixed(0)+'</b>')+'<br><button class="btn alt" data-i="'+idx+'">Remove</button></div></div>'});
+ $('log').innerHTML=h||'<span class="dim">No paper trades yet.</span>';
+ var done=trades.filter(function(t){return t.exit!=null});
+ $('logNote').textContent=done.length?done.length+' closed. Wins: '+done.filter(function(t){return t.exit>t.entry}).length+'. Judge a method over 20 or more trades.':''}
+$('log').onclick=function(e){var i=e.target.getAttribute&&e.target.getAttribute('data-i');if(i!=null){trades.splice(+i,1);save();draw()}};
+$('add').onclick=function(){if(!plan)return;trades.push({sym:plan.sym,entry:plan.entry,stop:plan.stop,target:plan.target,size:plan.size,status:'pending',last:null});save();draw();check()};
+$('acct').oninput=$('risk').oninput=function(){if(tick)analyze()};
+draw();load();setInterval(function(){if(!document.hidden)load()},30000);
+})();
+</script>
+</body>
+</html>
